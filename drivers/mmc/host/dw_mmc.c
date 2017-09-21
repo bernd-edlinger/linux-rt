@@ -1242,6 +1242,9 @@ static void dw_mci_setup_bus(struct dw_mci_slot *slot, bool force_clkinit)
 	u32 clk_en_a;
 	u32 sdmmc_cmd_bits = SDMMC_CMD_UPD_CLK | SDMMC_CMD_PRV_DAT_WAIT;
 
+	if (host->slot != slot)
+		return;
+
 	/* We must continue to set bit 28 in CMD until the change is complete */
 	if (host->state == STATE_WAITING_CMD11_DONE)
 		sdmmc_cmd_bits |= SDMMC_CMD_VOLT_SWITCH;
@@ -1293,6 +1296,10 @@ static void dw_mci_setup_bus(struct dw_mci_slot *slot, bool force_clkinit)
 		/* inform CIU */
 		mci_send_cmd(slot, sdmmc_cmd_bits, 0);
 
+		if (host->card_select)
+			gpiod_set_value(host->card_select,
+					slot != host->slots[0]);
+
 		/* enable clock; only low power if no SDIO */
 		clk_en_a = SDMMC_CLKEN_ENABLE << slot->id;
 		if (!test_bit(DW_MMC_CARD_NO_LOW_PWR, &slot->flags))
@@ -1319,6 +1326,12 @@ static void __dw_mci_start_request(struct dw_mci *host,
 	struct mmc_request *mrq;
 	struct mmc_data	*data;
 	u32 cmdflags;
+
+	if (host->slot != slot) {
+		host->slot = slot;
+		host->current_speed = 0;
+		dw_mci_setup_bus(slot, false);
+	}
 
 	mrq = slot->mrq;
 
@@ -1444,6 +1457,8 @@ static void dw_mci_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 	u32 regs;
 	int ret;
 
+	spin_lock_bh(&slot->host->lock);
+
 	switch (ios->bus_width) {
 	case MMC_BUS_WIDTH_4:
 		slot->ctype = SDMMC_CTYPE_4BIT;
@@ -1487,6 +1502,7 @@ static void dw_mci_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 				dev_err(slot->host->dev,
 					"failed to enable vmmc regulator\n");
 				/*return, if failed turn on vmmc*/
+				spin_unlock_bh(&slot->host->lock);
 				return;
 			}
 		}
@@ -1540,18 +1556,25 @@ static void dw_mci_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 
 	if (slot->host->state == STATE_WAITING_CMD11_DONE && ios->clock != 0)
 		slot->host->state = STATE_IDLE;
+
+	spin_unlock_bh(&slot->host->lock);
 }
 
 static int dw_mci_card_busy(struct mmc_host *mmc)
 {
 	struct dw_mci_slot *slot = mmc_priv(mmc);
+	struct dw_mci *host = slot->host;
 	u32 status;
+
+	/* access without spinlock is safe here */
+	if (host->card_select && host->slot != slot)
+		return 0;
 
 	/*
 	 * Check the busy bit which is low when DAT[3:0]
 	 * (the data lines) are 0000
 	 */
-	status = mci_readl(slot->host, STATUS);
+	status = mci_readl(host, STATUS);
 
 	return !!(status & SDMMC_STATUS_BUSY);
 }
@@ -1565,8 +1588,13 @@ static int dw_mci_switch_voltage(struct mmc_host *mmc, struct mmc_ios *ios)
 	u32 v18 = SDMMC_UHS_18V << slot->id;
 	int ret;
 
-	if (drv_data && drv_data->switch_voltage)
-		return drv_data->switch_voltage(mmc, ios);
+	spin_lock_bh(&host->lock);
+
+	if (drv_data && drv_data->switch_voltage) {
+		ret = drv_data->switch_voltage(mmc, ios);
+		spin_unlock_bh(&host->lock);
+		return ret;
+	}
 
 	/*
 	 * Program the voltage.  Note that some instances of dw_mmc may use
@@ -1586,11 +1614,13 @@ static int dw_mci_switch_voltage(struct mmc_host *mmc, struct mmc_ios *ios)
 			dev_dbg(&mmc->class_dev,
 					 "Regulator set error %d - %s V\n",
 					 ret, uhs & v18 ? "1.8" : "3.3");
+			spin_unlock_bh(&host->lock);
 			return ret;
 		}
 	}
 	mci_writel(host, UHS_REG, uhs);
 
+	spin_unlock_bh(&host->lock);
 	return 0;
 }
 
@@ -2641,12 +2671,16 @@ static void dw_mci_cmd_interrupt(struct dw_mci *host, u32 status)
 
 static void dw_mci_handle_cd(struct dw_mci *host)
 {
-	struct dw_mci_slot *slot = host->slot;
+	int i;
 
-	if (slot->mmc->ops->card_event)
-		slot->mmc->ops->card_event(slot->mmc);
-	mmc_detect_change(slot->mmc,
-		msecs_to_jiffies(host->pdata->detect_delay_ms));
+	for (i = 0; i < host->num_slots; i++) {
+		struct dw_mci_slot *slot = host->slots[i];
+
+		if (slot->mmc->ops->card_event)
+			slot->mmc->ops->card_event(slot->mmc);
+		mmc_detect_change(slot->mmc,
+			msecs_to_jiffies(host->pdata->detect_delay_ms));
+	}
 }
 
 static irqreturn_t dw_mci_interrupt(int irq, void *dev_id)
@@ -2778,7 +2812,7 @@ static irqreturn_t dw_mci_interrupt(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
-static int dw_mci_init_slot(struct dw_mci *host)
+static int dw_mci_init_slot(struct dw_mci *host, unsigned int id)
 {
 	struct mmc_host *mmc;
 	struct dw_mci_slot *slot;
@@ -2795,7 +2829,7 @@ static int dw_mci_init_slot(struct dw_mci *host)
 	slot->sdio_id = host->sdio_id0 + slot->id;
 	slot->mmc = mmc;
 	slot->host = host;
-	host->slot = slot;
+	host->slots[id] = slot;
 
 	mmc->ops = &dw_mci_ops;
 	if (device_property_read_u32_array(host->dev, "clock-freq-min-max",
@@ -2842,7 +2876,7 @@ static int dw_mci_init_slot(struct dw_mci *host)
 	if (host->pdata->caps2)
 		mmc->caps2 = host->pdata->caps2;
 
-	ret = mmc_of_parse(mmc);
+	ret = mmc_of_parse_ex(mmc, id);
 	if (ret)
 		goto err_host_allocated;
 
@@ -2891,11 +2925,11 @@ err_host_allocated:
 	return ret;
 }
 
-static void dw_mci_cleanup_slot(struct dw_mci_slot *slot)
+static void dw_mci_cleanup_slot(struct dw_mci_slot *slot, unsigned int id)
 {
 	/* Debugfs stuff is cleaned up by mmc core */
 	mmc_remove_host(slot->mmc);
-	slot->host->slot = NULL;
+	slot->host->slots[id] = NULL;
 	mmc_free_host(slot->mmc);
 }
 
@@ -3203,6 +3237,15 @@ int dw_mci_probe(struct dw_mci *host)
 		}
 	}
 
+	host->card_select = devm_gpiod_get_optional(host->dev, "select",
+						    GPIOD_OUT_LOW);
+	if (IS_ERR(host->card_select)) {
+		dev_err(host->dev, "card select gpio not available\n");
+		return PTR_ERR(host->card_select);
+	}
+
+	host->num_slots = host->card_select ? 2 : 1;
+
 	host->biu_clk = devm_clk_get(host->dev, "biu");
 	if (IS_ERR(host->biu_clk)) {
 		dev_dbg(host->dev, "biu clock not available\n");
@@ -3366,11 +3409,13 @@ int dw_mci_probe(struct dw_mci *host)
 		 "DW MMC controller at irq %d,%d bit host data width,%u deep fifo\n",
 		 host->irq, width, fifo_size);
 
-	/* We need at least one slot to succeed */
-	ret = dw_mci_init_slot(host);
-	if (ret) {
-		dev_dbg(host->dev, "slot %d init failed\n", i);
-		goto err_dmaunmap;
+	/* We need all slots to succeed */
+	for (i = 0; i < host->num_slots; i++) {
+		ret = dw_mci_init_slot(host, i);
+		if (ret) {
+			dev_dbg(host->dev, "slot %d init failed\n", i);
+			goto err_dmaunmap;
+		}
 	}
 
 	/* Now that slots are all setup, we can enable card detect */
@@ -3397,9 +3442,13 @@ EXPORT_SYMBOL(dw_mci_probe);
 
 void dw_mci_remove(struct dw_mci *host)
 {
-	dev_dbg(host->dev, "remove slot\n");
-	if (host->slot)
-		dw_mci_cleanup_slot(host->slot);
+	int i;
+
+	for (i = 0; i < host->num_slots; i++) {
+		dev_dbg(host->dev, "remove slot %d\n", i);
+		if (host->slots[i])
+			dw_mci_cleanup_slot(host->slots[i], i);
+	}
 
 	mci_writel(host, RINTSTS, 0xFFFFFFFF);
 	mci_writel(host, INTMASK, 0); /* disable all mmc interrupt first */
@@ -3470,8 +3519,8 @@ int dw_mci_runtime_resume(struct device *dev)
 	 * Restore the initial value at FIFOTH register
 	 * And Invalidate the prev_blksz with zero
 	 */
-	 mci_writel(host, FIFOTH, host->fifoth_val);
-	 host->prev_blksz = 0;
+	mci_writel(host, FIFOTH, host->fifoth_val);
+	host->prev_blksz = 0;
 
 	/* Put in max timeout */
 	mci_writel(host, TMOUT, 0xFFFFFFFF);
