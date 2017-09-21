@@ -20,6 +20,8 @@
 #include <linux/reset.h>
 #include <linux/interrupt.h>
 
+#define MAX_MCI_SLOTS	2
+
 enum dw_mci_state {
 	STATE_IDLE = 0,
 	STATE_SENDING_CMD,
@@ -65,8 +67,7 @@ struct dw_mci_dma_slave {
  * @fifo_reg: Pointer to MMIO registers for data FIFO
  * @sg: Scatterlist entry currently being processed by PIO code, if any.
  * @sg_miter: PIO mapping scatterlist iterator.
- * @cur_slot: The slot which is currently using the controller.
- * @mrq: The request currently being processed on @cur_slot,
+ * @mrq: The request currently being processed on @slot,
  *	or NULL if the controller is idle.
  * @cmd: The command currently being sent to the card, or NULL.
  * @data: The data currently being transferred, or NULL if no data
@@ -110,7 +111,8 @@ struct dw_mci_dma_slave {
  * @priv: Implementation defined private data.
  * @biu_clk: Pointer to bus interface unit clock instance.
  * @ciu_clk: Pointer to card interface unit clock instance.
- * @slot: Slots sharing this MMC controller.
+ * @slot: The slot which is currently using the controller.
+ * @slots: Slots sharing this MMC controller.
  * @fifo_depth: depth of FIFO.
  * @data_addr_override: override fifo reg offset with this value.
  * @wm_aligned: force fifo watermark equal with data length in PIO mode.
@@ -128,6 +130,7 @@ struct dw_mci_dma_slave {
  * @cmd11_timer: Timer for SD3.0 voltage switch over scheme.
  * @cto_timer: Timer for broken command transfer over scheme.
  * @dto_timer: Timer for broken data transfer over scheme.
+ * @card_select: The optional external card select output.
  *
  * Locking
  * =======
@@ -203,6 +206,7 @@ struct dw_mci {
 
 	u32			bus_hz;
 	u32			current_speed;
+	u32			num_slots;
 	u32			fifoth_val;
 	u16			verid;
 	struct device		*dev;
@@ -212,6 +216,7 @@ struct dw_mci {
 	struct clk		*biu_clk;
 	struct clk		*ciu_clk;
 	struct dw_mci_slot	*slot;
+	struct dw_mci_slot	*slots[MAX_MCI_SLOTS];
 
 	/* FIFO push and pull */
 	int			fifo_depth;
@@ -235,6 +240,8 @@ struct dw_mci {
 	struct timer_list       cmd11_timer;
 	struct timer_list       cto_timer;
 	struct timer_list       dto_timer;
+
+	struct gpio_desc	*card_select;
 };
 
 /* DMA ops for Internal/External DMAC interface */
