@@ -192,6 +192,12 @@ config GPIO_EXAR
 	  Selecting this option will enable handling of GPIO pins present
 	  on Exar XR17V352/354/358 chips.
 
+config GPIO_FPGAMGR
+	tristate "Altera FPGAMGR GPIO"
+	depends on OF_GPIO
+	help
+	  Say yes here to support the Altera FPGAMGR GPIO device.
+
 config GPIO_GE_FPGA
 	bool "GE FPGA based GPIO"
 	depends on GE_FPGA
