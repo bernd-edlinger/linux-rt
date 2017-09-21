@@ -448,8 +448,13 @@ struct mmc_host *mmc_alloc_host(int extra, struct device *);
 int mmc_add_host(struct mmc_host *);
 void mmc_remove_host(struct mmc_host *);
 void mmc_free_host(struct mmc_host *);
-int mmc_of_parse(struct mmc_host *host);
+int mmc_of_parse_ex(struct mmc_host *host, int idx);
 int mmc_of_parse_voltage(struct device_node *np, u32 *mask);
+
+static inline int mmc_of_parse(struct mmc_host *host)
+{
+	return mmc_of_parse_ex(host, 0);
+}
 
 static inline void *mmc_priv(struct mmc_host *host)
 {
