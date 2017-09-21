@@ -1216,6 +1216,13 @@ config ARM_ERRATA_852423
 	  config option from the A12 erratum due to the way errata are checked
 	  for and handled.
 
+config ARM_ERRATA_WFE_BROKEN
+	bool "ARM errata: wfe broken"
+	depends on CPU_V7 && SMP
+	help
+	  This option disables the wfe instruction for raw_spin_locks.
+	  At least some CycloneV SoC devices wait much too long in wfe.
+
 endmenu
 
 source "arch/arm/common/Kconfig"
