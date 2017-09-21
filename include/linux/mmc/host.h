@@ -540,8 +540,13 @@ void mmc_remove_host(struct mmc_host *);
 void mmc_free_host(struct mmc_host *);
 void mmc_of_parse_clk_phase(struct mmc_host *host,
 			    struct mmc_clk_phase_map *map);
-int mmc_of_parse(struct mmc_host *host);
+int mmc_of_parse_ex(struct mmc_host *host, int idx);
 int mmc_of_parse_voltage(struct mmc_host *host, u32 *mask);
+
+static inline int mmc_of_parse(struct mmc_host *host)
+{
+	return mmc_of_parse_ex(host, 0);
+}
 
 static inline void *mmc_priv(struct mmc_host *host)
 {
