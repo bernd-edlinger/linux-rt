@@ -164,15 +164,16 @@ static void mmc_retune_timer(struct timer_list *t)
 }
 
 /**
- *	mmc_of_parse() - parse host's device-tree node
+ *	mmc_of_parse_ex() - parse host's device-tree node
  *	@host: host whose node should be parsed.
+ *	@idx: slot index.
  *
  * To keep the rest of the MMC subsystem unaware of whether DT has been
  * used to to instantiate and configure this host instance or not, we
  * parse the properties and set respective generic mmc-host flags and
  * parameters.
  */
-int mmc_of_parse(struct mmc_host *host)
+int mmc_of_parse_ex(struct mmc_host *host, int idx)
 {
 	struct device *dev = host->parent;
 	u32 bus_width, drv_type, cd_debounce_delay_ms;
@@ -233,7 +234,7 @@ int mmc_of_parse(struct mmc_host *host)
 		if (device_property_read_bool(dev, "broken-cd"))
 			host->caps |= MMC_CAP_NEEDS_POLL;
 
-		ret = mmc_gpiod_request_cd(host, "cd", 0, false,
+		ret = mmc_gpiod_request_cd(host, "cd", idx, false,
 					   cd_debounce_delay_ms * 1000);
 		if (!ret)
 			dev_info(host->parent, "Got CD GPIO\n");
@@ -246,7 +247,7 @@ int mmc_of_parse(struct mmc_host *host)
 	if (device_property_read_bool(dev, "wp-inverted"))
 		host->caps2 |= MMC_CAP2_RO_ACTIVE_HIGH;
 
-	ret = mmc_gpiod_request_ro(host, "wp", 0, 0);
+	ret = mmc_gpiod_request_ro(host, "wp", idx, 0);
 	if (!ret)
 		dev_info(host->parent, "Got WP GPIO\n");
 	else if (ret != -ENOENT && ret != -ENOSYS)
@@ -330,7 +331,7 @@ int mmc_of_parse(struct mmc_host *host)
 	return mmc_pwrseq_alloc(host);
 }
 
-EXPORT_SYMBOL(mmc_of_parse);
+EXPORT_SYMBOL(mmc_of_parse_ex);
 
 /**
  * mmc_of_parse_voltage - return mask of supported voltages
