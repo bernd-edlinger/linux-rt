@@ -10,6 +10,12 @@
 #include <asm/barrier.h>
 #include <asm/processor.h>
 
+#ifdef CONFIG_ARM_ERRATA_WFE_BROKEN
+#undef wfe
+#define wfe()
+#define WFE(x)
+#define dsb_sev()
+#else
 /*
  * sev and wfe are ARMv6K extensions.  Uniprocessor ARMv6 may not have the K
  * extensions, so when running on UP, we have to patch these instructions away.
@@ -44,6 +50,7 @@ static inline void dsb_sev(void)
 	dsb(ishst);
 	__asm__(SEV);
 }
+#endif
 
 /*
  * ARMv6 ticket-based spin-locking.
