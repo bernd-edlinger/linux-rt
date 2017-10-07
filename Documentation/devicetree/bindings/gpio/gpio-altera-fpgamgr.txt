@@ -1,0 +1,43 @@
+Altera FPGA Manager GPIO controller bindings
+
+Required controller properties:
+- #address-cells : Should be 1
+- #size-cells : Should be 0
+- compatible:
+  - "altr,fpgamgr-gpio"
+- reg: Physical base address and length of the controller's registers.
+
+The FPGA Manager has two 32-bit ports, one for input and one for output.
+
+Port properties:
+- compatible:
+  - "altr,fpgamgr-gpio-output"
+  - "altr,fpgamgr-gpio-input"
+- #gpio-cells : Should be 2
+  - The first cell is the gpio offset number.
+  - The second cell is reserved and is currently unused.
+- gpio-controller : Marks the device node as a GPIO controller.
+- reg : Port number, 0 for output, 1 for input.
+
+Example:
+
+gpio3: gpio@ff706010 {
+  #address-cells = <1>;
+  #size-cells = <0>;
+  compatible = "altr,fpgamgr-gpio";
+  reg = <0xff706010 0x8>;
+
+  portd: gpio-controller@0 {
+    compatible = "altr,fpgamgr-gpio-output";
+    gpio-controller;
+    #gpio-cells = <2>;
+    reg = <0>;
+  };
+
+  porte: gpio-controller@1 {
+    compatible = "altr,fpgamgr-gpio-input";
+    gpio-controller;
+    #gpio-cells = <2>;
+    reg = <1>;
+  };
+};
