@@ -95,6 +95,10 @@ Optional properties:
 * dma-names: request names for generic DMA client binding. Must be "rx-tx".
   Refer to dma.txt for details.
 
+* select-gpio: external card select output if given enables dual slot multiplex.
+
+* cd-gpios: card detect inputs.
+
 Aliases:
 
 - All the MSHC controller nodes should be represented in the aliases node using
@@ -147,4 +151,14 @@ board specific portions as listed below.
 		cap-sd-highspeed;
 		dmas = <&pdma 12>;
 		dma-names = "rx-tx";
+	};
+
+[board specific multiplexed bus binding]
+
+	dwmmc0@12200000 {
+		bus-width = <4>;
+		cap-mmc-highspeed;
+		cap-sd-highspeed;
+		select-gpio = <&portd 2 0>;
+		cd-gpios = <&portb 28 1>, <&porta 18 1>;
 	};
