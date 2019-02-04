@@ -21,10 +21,13 @@ typedef void (*harden_branch_predictor_fn_t)(void);
 DECLARE_PER_CPU(harden_branch_predictor_fn_t, harden_branch_predictor_fn);
 static inline void harden_branch_predictor(void)
 {
-	harden_branch_predictor_fn_t fn = per_cpu(harden_branch_predictor_fn,
-						  smp_processor_id());
+	harden_branch_predictor_fn_t fn;
+
+	preempt_disable();
+	fn = per_cpu(harden_branch_predictor_fn, smp_processor_id());
 	if (fn)
 		fn();
+	preempt_enable();
 }
 #else
 #define harden_branch_predictor() do { } while (0)
