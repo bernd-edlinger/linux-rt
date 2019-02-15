@@ -645,6 +645,7 @@ static void process_random_ready_list(void)
 static void credit_entropy_bits(struct entropy_store *r, int nbits)
 {
 	int entropy_count, orig;
+	int entropy_bits;
 	const int pool_size = r->poolinfo->poolfracbits;
 	int nfrac = nbits << ENTROPY_SHIFT;
 
@@ -702,8 +703,9 @@ retry:
 	if (cmpxchg(&r->entropy_count, orig, entropy_count) != orig)
 		goto retry;
 
+	entropy_bits = entropy_count >> ENTROPY_SHIFT;
 	r->entropy_total += nbits;
-	if (!r->initialized && r->entropy_total > 128) {
+	if (!r->initialized && entropy_bits >= 128) {
 		r->initialized = 1;
 		r->entropy_total = 0;
 	}
@@ -713,8 +715,6 @@ retry:
 				  r->entropy_total, _RET_IP_);
 
 	if (r == &input_pool) {
-		int entropy_bits = entropy_count >> ENTROPY_SHIFT;
-
 		if (crng_init < 2 && entropy_bits >= 128) {
 			crng_reseed(&primary_crng, r);
 			entropy_bits = r->entropy_count >> ENTROPY_SHIFT;
@@ -722,10 +722,12 @@ retry:
 
 		/* should we wake readers? */
 		if (entropy_bits >= random_read_wakeup_bits &&
+		    r->initialized &&
 		    wq_has_sleeper(&random_read_wait)) {
 			wake_up_interruptible(&random_read_wait);
 			kill_fasync(&fasync, SIGIO, POLL_IN);
 		}
+
 		/* If the input pool is getting full, send some
 		 * entropy to the blocking pool until it is 75% full.
 		 */
@@ -931,9 +933,11 @@ static void crng_reseed(struct crng_state *crng, struct entropy_store *r)
 	} buf;
 
 	if (r) {
-		num = extract_entropy(r, &buf, 32, 16, 0);
+		num = extract_entropy(r, &buf, 32, 16, crng_ready()
+				      ? random_read_wakeup_bits / 4 : 0);
 		if (num == 0)
 			return;
+		crng_global_init_time = jiffies;
 	} else {
 		_extract_crng(&primary_crng, buf.block);
 		_crng_backtrack_protect(&primary_crng, buf.block,
@@ -1662,7 +1666,7 @@ EXPORT_SYMBOL(get_random_bytes);
  */
 int wait_for_random_bytes(void)
 {
-	if (likely(crng_ready()))
+	if (crng_ready())
 		return 0;
 	return wait_event_interruptible(crng_init_wait, crng_ready());
 }
@@ -1852,7 +1856,9 @@ _random_read(int nonblock, char __user *buf, size_t nbytes)
 
 	nbytes = min_t(size_t, nbytes, SEC_XFER_SIZE);
 	while (1) {
-		n = extract_entropy_user(&blocking_pool, buf, nbytes);
+		n = input_pool.initialized && crng_ready()
+			? extract_entropy_user(&blocking_pool, buf, nbytes)
+			: 0;
 		if (n < 0)
 			return n;
 		trace_random_read(n*8, (nbytes-n)*8,
@@ -1866,6 +1872,7 @@ _random_read(int nonblock, char __user *buf, size_t nbytes)
 			return -EAGAIN;
 
 		wait_event_interruptible(random_read_wait,
+			input_pool.initialized &&
 			ENTROPY_BITS(&input_pool) >=
 			random_read_wakeup_bits);
 		if (signal_pending(current))
@@ -1910,7 +1917,8 @@ random_poll(struct file *file, poll_table * wait)
 	poll_wait(file, &random_read_wait, wait);
 	poll_wait(file, &random_write_wait, wait);
 	mask = 0;
-	if (ENTROPY_BITS(&input_pool) >= random_read_wakeup_bits)
+	if (input_pool.initialized &&
+		ENTROPY_BITS(&input_pool) >= random_read_wakeup_bits)
 		mask |= EPOLLIN | EPOLLRDNORM;
 	if (ENTROPY_BITS(&input_pool) < random_write_wakeup_bits)
 		mask |= EPOLLOUT | EPOLLWRNORM;
