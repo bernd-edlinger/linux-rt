@@ -108,9 +108,20 @@ static unsigned long socfpga_clk_recalc_rate(struct clk_hw *hwclk,
 	return parent_rate / div;
 }
 
+static int socfpga_determine_rate(struct clk_hw *hw, struct clk_rate_request *req)
+{
+	struct clk_hw *parent = clk_hw_get_parent(hw);
+
+	if (!parent)
+		return -EINVAL;
+
+	req->rate = socfpga_clk_recalc_rate(hw, clk_hw_get_rate(parent));
+	return 0;
+}
+
 static struct clk_ops gateclk_ops = {
 	.recalc_rate = socfpga_clk_recalc_rate,
-	.determine_rate = clk_hw_determine_rate_no_reparent,
+	.determine_rate = socfpga_determine_rate,
 	.get_parent = socfpga_clk_get_parent,
 	.set_parent = socfpga_clk_set_parent,
 };
