@@ -1473,6 +1473,12 @@ static void dw_mci_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 		slot->ctype = SDMMC_CTYPE_1BIT;
 	}
 
+	if (slot->host->slot != NULL && slot->host->slot != slot) {
+		slot->clock = ios->clock;
+		spin_unlock_bh(&slot->host->lock);
+		return;
+	}
+
 	regs = mci_readl(slot->host, UHS_REG);
 
 	/* DDR mode set */
@@ -1538,6 +1544,9 @@ static void dw_mci_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 
 		break;
 	case MMC_POWER_OFF:
+		if (slot->host->num_slots > 1)
+			break;
+
 		/* Turn clock off before power goes down */
 		dw_mci_setup_bus(slot, false);
 
@@ -1591,6 +1600,11 @@ static int dw_mci_switch_voltage(struct mmc_host *mmc, struct mmc_ios *ios)
 	int ret;
 
 	spin_lock_bh(&host->lock);
+
+	if (slot->host->slot != NULL && slot->host->slot != slot) {
+		spin_unlock_bh(&slot->host->lock);
+		return 0;
+	}
 
 	if (drv_data && drv_data->switch_voltage) {
 		ret = drv_data->switch_voltage(mmc, ios);
